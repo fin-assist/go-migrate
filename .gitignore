@@ -1,0 +1,18 @@
+cover.out
+coverage.md
+comment.md
+gorelease.txt
+notes.md
+__pycache__/
+
+# Local Renovate runtime dependencies
+node_modules/
+
+# Independent suite coverage evidence
+unit.out
+integration.out
+api.out
+*.jsonl
+*.coverage.txt
+*.report.txt
+test-names.txt
