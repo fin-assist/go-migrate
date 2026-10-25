@@ -156,6 +156,42 @@ func TestUnitDownPreservesShortLimit(t *testing.T) {
 	}
 }
 
+func TestUnitEmptyInitializationPreservesCancellation(t *testing.T) {
+	for _, operation := range []string{"up", "versions", "check", "initialization-error"} {
+		t.Run(operation, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			q := &fakeQueue{}
+			r := fakeRunner(q, &fakeSession{})
+			sentinel := errors.New("initialization failure")
+			r.open = func(Config, Source) (migrationSession, error) {
+				cancel()
+				if operation == "initialization-error" {
+					return nil, sentinel
+				}
+				return nil, errEmpty
+			}
+			cfg := DefaultConfig("postgres://localhost/db")
+			var err error
+			switch operation {
+			case "versions":
+				_, err = r.versions(ctx, cfg, []Source{source()})
+			case "check":
+				err = r.check(ctx, cfg, source())
+			default:
+				err = r.up(ctx, cfg, []Source{source()})
+			}
+			want := context.Canceled
+			if operation == "initialization-error" {
+				want = sentinel
+			}
+			if !errors.Is(err, want) || q.closed != 1 {
+				t.Fatalf("error=%v queue closes=%d", err, q.closed)
+			}
+		})
+	}
+}
+
 func TestUnitQueueConfigurationAndFailures(t *testing.T) {
 	cfg := DefaultConfig("postgres://localhost/db?application_name=old&lock_timeout=900")
 	cfg.WaitTimeout = 20 * time.Millisecond

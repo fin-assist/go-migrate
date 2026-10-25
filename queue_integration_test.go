@@ -1,0 +1,177 @@
+package migrate_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/golang-migrate/migrate/v4/database"
+	"github.com/jackc/pgx/v5"
+
+	migrate "github.com/fin-assist/go-migrate"
+	pgtest "github.com/fin-assist/go-migrate/internal/pgtest"
+)
+
+func waitPostgres(t *testing.T, ctx context.Context, conn *pgx.Conn, query string, args ...any) {
+	t.Helper()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var ready bool
+		if err := conn.QueryRow(ctx, query, args...).Scan(&ready); err != nil {
+			t.Fatal(err)
+		}
+		if ready {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+func receiveRun(t *testing.T, ctx context.Context, result <-chan error) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+		return nil
+	}
+}
+func TestIntegrationEmptyInitializationCancellationAndErrorPriority(t *testing.T) {
+	for _, operation := range []string{"up", "versions", "check", "initialization-error"} {
+		t.Run(operation, func(t *testing.T) {
+			dsn := pgtest.DSN(t)
+			ctx, deadline := context.WithTimeout(t.Context(), 5*time.Second)
+			defer deadline()
+			conn, err := pgx.Connect(ctx, dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close(context.Background()) }()
+			var databaseName string
+			if err := conn.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
+				t.Fatal(err)
+			}
+			nativeLock, err := database.GenerateAdvisoryLockId(databaseName, "public", "versions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", nativeLock); err != nil {
+				t.Fatal(err)
+			}
+			cfg := migrate.DefaultConfig(dsn)
+			if operation == "initialization-error" {
+				cfg.DSN += "&default_transaction_read_only=on"
+			}
+			src := migrate.Source{Name: "empty", Table: "versions", FS: fstest.MapFS{}}
+			runctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				switch operation {
+				case "versions":
+					_, err := migrate.Versions(runctx, cfg, []migrate.Source{src})
+					result <- err
+				case "check":
+					result <- migrate.CheckUpDownUp(runctx, cfg, src)
+				default:
+					result <- migrate.Up(runctx, cfg, []migrate.Source{src})
+				}
+			}()
+			waitPostgres(t, ctx, conn, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='migrate' AND wait_event='advisory')")
+			cancel()
+			if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", nativeLock); err != nil {
+				t.Fatal(err)
+			}
+			err = receiveRun(t, ctx, result)
+			if operation == "initialization-error" {
+				if !hasSQLState(err, "25006") || errors.Is(err, context.Canceled) {
+					t.Fatalf("real setup error replaced: %v", err)
+				}
+			} else if !errors.Is(err, context.Canceled) {
+				t.Fatalf("empty source lost cancellation: %v", err)
+			}
+			var active int
+			if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait')").Scan(&active); err != nil {
+				t.Fatal(err)
+			}
+			if active != 0 {
+				t.Fatalf("canceled setup left %d migration connections", active)
+			}
+			cfg = migrate.DefaultConfig(dsn)
+			if err := migrate.Up(ctx, cfg, []migrate.Source{src}); err != nil {
+				t.Fatal("retry", err)
+			}
+			st, err := migrate.Versions(ctx, cfg, []migrate.Source{src})
+			if err != nil || st[0].Version != 0 || st[0].Dirty {
+				t.Fatalf("retry state %v %v", st, err)
+			}
+		})
+	}
+}
+func TestIntegrationQueueRemainsHeldAcrossFilesBeforeCompetingDown(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	ctx, deadline := context.WithTimeout(t.Context(), 5*time.Second)
+	defer deadline()
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(251102),pg_advisory_lock(251104)"); err != nil {
+		t.Fatal(err)
+	}
+	src := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"000001_first.up.sql":    {Data: []byte("CREATE TABLE first_file(id bigint); SELECT pg_advisory_lock(251101); SELECT pg_advisory_lock(251102)")},
+		"000001_first.down.sql":  {Data: []byte("DROP TABLE first_file")},
+		"000002_second.up.sql":   {Data: []byte("CREATE TABLE second_file(id bigint); SELECT pg_advisory_lock(251103); SELECT pg_advisory_lock(251104)")},
+		"000002_second.down.sql": {Data: []byte("DROP TABLE second_file")},
+	}}
+	cfg := migrate.DefaultConfig(dsn)
+	up, down := make(chan error, 1), make(chan error, 1)
+	go func() { up <- migrate.Up(ctx, cfg, []migrate.Source{src}) }()
+	signal := "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND objid=$1 AND granted)"
+	waitPostgres(t, ctx, conn, signal, int64(251101))
+	go func() { down <- migrate.Down(ctx, cfg, src, 1) }()
+	waiting := "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='migrate-wait' AND wait_event='advisory')"
+	waitPostgres(t, ctx, conn, waiting)
+	var competitor int32
+	if err := conn.QueryRow(ctx, "SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND application_name='migrate-wait' AND wait_event='advisory'").Scan(&competitor); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock(251102)"); err != nil {
+		t.Fatal(err)
+	}
+	waitPostgres(t, ctx, conn, signal, int64(251103))
+	var stillWaiting bool
+	if err := conn.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND application_name='migrate-wait' AND wait_event='advisory')", competitor).Scan(&stillWaiting); err != nil {
+		t.Fatal(err)
+	}
+	if !stillWaiting {
+		t.Fatal("competing Down acquired queue between SQL files")
+	}
+	select {
+	case err := <-down:
+		t.Fatalf("competing Down completed before the source: %v", err)
+	default:
+	}
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock(251104)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := receiveRun(t, ctx, up); err != nil {
+		t.Fatal("up", err)
+	}
+	if err := receiveRun(t, ctx, down); err != nil {
+		t.Fatal("down", err)
+	}
+	st, err := migrate.Versions(ctx, cfg, []migrate.Source{src})
+	if err != nil || st[0].Version != 1 || st[0].Dirty || !exists(t, dsn, "first_file") || exists(t, dsn, "second_file") {
+		t.Fatalf("competitor ran in the wrong order: %v %v", st, err)
+	}
+}

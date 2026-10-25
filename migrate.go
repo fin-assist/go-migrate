@@ -315,6 +315,9 @@ func (r runner) withMigrate(ctx context.Context, cfg Config, src Source, fn func
 	defer release()
 	m, err := r.open(cfg, src)
 	if err != nil {
+		if errors.Is(err, errEmpty) && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		return err
 	}
 	defer func() { _, _ = m.Close() }()

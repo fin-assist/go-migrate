@@ -10,6 +10,8 @@
 
 ### Изменено
 
+- FIN-251: отмена во время инициализации пустого источника сохраняется в Up/Versions/CheckUpDownUp, реальные ошибки инициализации не перетираются. PG regression с двумя файлами и ожидающим конкурентным Down проверяет непрерывную queue lock между native Steps.
+
 - FIN-251: публичный Validate возвращает ошибку для nil FS до файлового/сетевого IO вместо panic; добавлены Unit и внешний consumer API regression.
 
 - FIN-251: обычный текст ошибок и логи не раскрывают migration SQL/DSN/error.Detail. Нативные SQL/engine diagnostics сохраняются для errors.Is/As через безопасный private wrapper; malformed DSN возвращает ErrInvalidDSN без небезопасного ParseError в цепочке. Raw engine Printf logging отключён, структурированные события runner сохранены.
