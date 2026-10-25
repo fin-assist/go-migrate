@@ -195,9 +195,14 @@ type emptyApplied struct {
 	dirty   bool
 }
 
-// Error gives no force hint: Force cannot work in a build without the source's files.
+// Error points to a build that has the source's files: Force cannot work in this one.
+// A dirty version refuses Down there too (ErrDirty), so it needs Force in that build.
 func (e emptyApplied) Error() string {
-	return fmt.Sprintf("applied version %d of source %s has no migration file: this build has no files of the source; check the schema and run Down with a build that has the file, or skip this migration run", e.version, e.source)
+	prefix := fmt.Sprintf("applied version %d of source %s has no migration file: this build has no files of the source; ", e.version, e.source)
+	if e.dirty {
+		return prefix + "the version is dirty: check the schema and force a version with a build that has the file, or skip this migration run"
+	}
+	return prefix + "check the schema and run Down with a build that has the file, or skip this migration run"
 }
 
 func isSQL(name string) bool {

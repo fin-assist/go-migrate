@@ -167,3 +167,22 @@ func TestUnitEmptyRecordedVersionPreservesCancellation(t *testing.T) {
 		t.Fatalf("versions %v %v", st, err)
 	}
 }
+
+func TestUnitEmptySourceWithDirtyRecordedVersion(t *testing.T) {
+	cfg := DefaultConfig("postgres://localhost/db")
+	r := fakeRunner(&fakeQueue{}, &fakeSession{})
+	r.open = func(Config, Source) (migrationSession, error) {
+		return nil, emptyApplied{source: "service", version: 5, dirty: true}
+	}
+	empty := Source{Name: "service", Table: "schema_migrations", FS: fstest.MapFS{}}
+	for name, err := range map[string]error{
+		"up":   r.up(context.Background(), cfg, []Source{empty}),
+		"down": r.down(context.Background(), cfg, empty, 1),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "applied version 5 of source service has no migration file") ||
+			!strings.Contains(err.Error(), "dirty") || strings.Contains(err.Error(), "Down") ||
+			!strings.Contains(err.Error(), "force a version with a build that has the file") {
+			t.Fatalf("%s: dirty hint %v", name, err)
+		}
+	}
+}

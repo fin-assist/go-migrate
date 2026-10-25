@@ -182,3 +182,36 @@ func TestIntegrationRecordedZeroFromOldForceRecovers(t *testing.T) {
 		t.Fatalf("final state %v %v", st, err)
 	}
 }
+
+// TestIntegrationEmptySourceWithDirtyVersion: a newer build failed its first migration, the
+// older build without files must point to Force in the newer build, not to Down.
+func TestIntegrationEmptySourceWithDirtyVersion(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	ctx := context.Background()
+	c := migrate.DefaultConfig(dsn)
+	newer := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"1_a.up.sql": sqlFile("SELECT broken"), "1_a.down.sql": sqlFile("SELECT 1"),
+	}}
+	if err := migrate.Up(ctx, c, []migrate.Source{newer}); err == nil {
+		t.Fatal("broken migration applied")
+	}
+	older := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{}}
+	for name, run := range map[string]func() error{
+		"up":   func() error { return migrate.Up(ctx, c, []migrate.Source{older}) },
+		"down": func() error { return migrate.Down(ctx, c, older, 1) },
+	} {
+		err := run()
+		if err == nil || !strings.Contains(err.Error(), "applied version 1 of source service has no migration file") ||
+			!strings.Contains(err.Error(), "dirty") || strings.Contains(err.Error(), "Down") {
+			t.Fatalf("%s: dirty hint %v", name, err)
+		}
+	}
+	st, err := migrate.Versions(ctx, c, []migrate.Source{older})
+	if err != nil || st[0].Version != 1 || !st[0].Dirty {
+		t.Fatalf("state %v %v", st, err)
+	}
+	// The newer build itself refuses Down on the dirty version, confirming the hint.
+	if err := migrate.Down(ctx, c, newer, 1); err == nil {
+		t.Fatal("down on a dirty version accepted")
+	}
+}
