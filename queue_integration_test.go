@@ -33,6 +33,17 @@ func waitPostgres(t *testing.T, ctx context.Context, conn *pgx.Conn, query strin
 		}
 	}
 }
+
+// waitRunnerDisconnected waits until no runner connection remains on the test database.
+// A client-side close is asynchronous for the server: the backend stays visible in
+// pg_stat_activity for a few milliseconds, so a single read races with it (FIN-279).
+// A real leak keeps the connection open and fails the test at the deadline.
+func waitRunnerDisconnected(t *testing.T, conn *pgx.Conn) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	waitPostgres(t, ctx, conn, "SELECT NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait'))")
+}
 func receiveRun(t *testing.T, ctx context.Context, result <-chan error) error {
 	t.Helper()
 	select {
@@ -97,13 +108,7 @@ func TestIntegrationEmptyInitializationCancellationAndErrorPriority(t *testing.T
 			} else if !errors.Is(err, context.Canceled) {
 				t.Fatalf("empty source lost cancellation: %v", err)
 			}
-			var active int
-			if err := conn.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait')").Scan(&active); err != nil {
-				t.Fatal(err)
-			}
-			if active != 0 {
-				t.Fatalf("canceled setup left %d migration connections", active)
-			}
+			waitRunnerDisconnected(t, conn)
 			cfg = migrate.DefaultConfig(dsn)
 			if err := migrate.Up(ctx, cfg, []migrate.Source{src}); err != nil {
 				t.Fatal("retry", err)

@@ -193,13 +193,7 @@ func TestAPIConsumerReadOnlyConnectionRefusesSetupAndCanRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	var active int
-	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait')").Scan(&active); err != nil {
-		t.Fatal(err)
-	}
-	if active != 0 {
-		t.Fatalf("failed deployment left %d connections", active)
-	}
+	waitRunnerDisconnected(t, conn)
 	if exists(t, dsn, "lib_outbox") {
 		t.Fatal("migration ran despite setup failure")
 	}
