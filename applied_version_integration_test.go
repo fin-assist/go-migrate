@@ -214,8 +214,11 @@ func TestIntegrationEmptySourceWithDirtyVersion(t *testing.T) {
 	if err := migrate.Down(ctx, c, newer, 1); err == nil {
 		t.Fatal("down on a dirty version accepted")
 	}
-	// The recommended recovery: the failed file rolled back as a whole, force nothing applied
-	// with the build that has the file; the older build then deploys.
+	// The recommended recovery: the failed file rolled back as a whole (no table a), so the
+	// schema matches "nothing applied"; force it with the build that has the file.
+	if exists(t, dsn, "a") {
+		t.Fatal("failed up left schema changes")
+	}
 	if err := migrate.Force(ctx, c, newer, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -225,6 +228,13 @@ func TestIntegrationEmptySourceWithDirtyVersion(t *testing.T) {
 	st, err = migrate.Versions(ctx, c, []migrate.Source{older})
 	if err != nil || st[0].Version != 0 || st[0].Dirty {
 		t.Fatalf("recovered state %v %v", st, err)
+	}
+	// Schema and version table agree: the newer build with its file corrected deploys.
+	fixed := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"1_a.up.sql": sqlFile("CREATE TABLE a(id bigint)"), "1_a.down.sql": sqlFile("DROP TABLE a"),
+	}}
+	if err := migrate.Up(ctx, c, []migrate.Source{fixed}); err != nil || !exists(t, dsn, "a") {
+		t.Fatalf("newer build after recovery: %v", err)
 	}
 }
 
@@ -261,7 +271,15 @@ func TestIntegrationEmptySourceWithDirtyNilVersion(t *testing.T) {
 	if err != nil || st[0].Version != 0 || !st[0].Dirty {
 		t.Fatalf("versions %v %v", st, err)
 	}
-	// Recovery in the build with the file, after checking the schema.
+	// Recovery in the build with the file, after checking the schema: the failed down ran
+	// no DDL, so table a is still there; the operator finishes the rollback by hand and
+	// forces "nothing applied" to match the schema.
+	if !exists(t, dsn, "a") {
+		t.Fatal("failed down changed the schema")
+	}
+	if _, err := pgtestExec(t, dsn, "DROP TABLE a"); err != nil {
+		t.Fatal(err)
+	}
 	if err := migrate.Force(ctx, c, newer, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -271,5 +289,9 @@ func TestIntegrationEmptySourceWithDirtyNilVersion(t *testing.T) {
 	st, err = migrate.Versions(ctx, c, []migrate.Source{older})
 	if err != nil || st[0].Version != 0 || st[0].Dirty {
 		t.Fatalf("recovered state %v %v", st, err)
+	}
+	// Schema and version table agree: the newer build deploys again.
+	if err := migrate.Up(ctx, c, []migrate.Source{newer}); err != nil || !exists(t, dsn, "a") {
+		t.Fatalf("newer build after recovery: %v", err)
 	}
 }
