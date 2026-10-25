@@ -65,11 +65,24 @@ func (m *fakeSession) Force(v int) error {
 	}
 	return m.forceErr
 }
-func (m *fakeSession) Version() (uint, bool, error) { return m.v, m.dirty, m.versionErr }
-func (m *fakeSession) Close() (error, error)        { m.closed++; return nil, nil }
 
+// Version mirrors the engine: nothing applied is ErrNilVersion, not version 0.
+func (m *fakeSession) Version() (uint, bool, error) {
+	if m.versionErr == nil && m.v == 0 && !m.dirty {
+		return 0, false, engine.ErrNilVersion
+	}
+	return m.v, m.dirty, m.versionErr
+}
+func (m *fakeSession) Close() (error, error) { m.closed++; return nil, nil }
+
+// source has versions 1..3, the versions fakeSession steps through.
 func source() Source {
-	return Source{Name: "service", Table: "schema_migrations", FS: fstest.MapFS{"000001_a.up.sql": {Data: []byte("SELECT 1")}, "000001_a.down.sql": {Data: []byte("SELECT 1")}}}
+	files := fstest.MapFS{}
+	for _, name := range []string{"000001_a", "000002_b", "000003_c"} {
+		files[name+".up.sql"] = &fstest.MapFile{Data: []byte("SELECT 1")}
+		files[name+".down.sql"] = &fstest.MapFile{Data: []byte("SELECT 1")}
+	}
+	return Source{Name: "service", Table: "schema_migrations", FS: files}
 }
 func fakeRunner(q *fakeQueue, m *fakeSession) runner {
 	return runner{connect: func(context.Context, *pgx.ConnConfig) (queueConn, error) { return q, nil }, open: func(Config, Source) (migrationSession, error) { return m, nil }}
@@ -115,8 +128,8 @@ func TestUnitRunnerLifecycle(t *testing.T) {
 				}
 			case "force":
 				m.dirty = true
-				err = r.force(ctx, cfg, src, 7)
-				if m.v != 7 || m.dirty {
+				err = r.force(ctx, cfg, src, 3)
+				if m.v != 3 || m.dirty {
 					t.Fatal(m)
 				}
 			case "up-error":
