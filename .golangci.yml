@@ -105,4 +105,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/fin-assist/go-library-template
+        - github.com/fin-assist/go-migrate
