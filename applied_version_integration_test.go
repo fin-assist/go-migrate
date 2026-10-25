@@ -214,4 +214,62 @@ func TestIntegrationEmptySourceWithDirtyVersion(t *testing.T) {
 	if err := migrate.Down(ctx, c, newer, 1); err == nil {
 		t.Fatal("down on a dirty version accepted")
 	}
+	// The recommended recovery: the failed file rolled back as a whole, force nothing applied
+	// with the build that has the file; the older build then deploys.
+	if err := migrate.Force(ctx, c, newer, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate.Up(ctx, c, []migrate.Source{older}); err != nil {
+		t.Fatalf("older build after recovery: %v", err)
+	}
+	st, err = migrate.Versions(ctx, c, []migrate.Source{older})
+	if err != nil || st[0].Version != 0 || st[0].Dirty {
+		t.Fatalf("recovered state %v %v", st, err)
+	}
+}
+
+// TestIntegrationEmptySourceWithDirtyNilVersion: a newer build failed to roll back its
+// first migration, golang-migrate recorded (-1, dirty); the older empty build must refuse.
+func TestIntegrationEmptySourceWithDirtyNilVersion(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	ctx := context.Background()
+	c := migrate.DefaultConfig(dsn)
+	newer := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"1_a.up.sql": sqlFile("CREATE TABLE a(id bigint)"), "1_a.down.sql": sqlFile("SELECT broken"),
+	}}
+	if err := migrate.Up(ctx, c, []migrate.Source{newer}); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate.Down(ctx, c, newer, 1); err == nil {
+		t.Fatal("broken down accepted")
+	}
+	var v int
+	var dirty bool
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if err := conn.QueryRow(ctx, "SELECT version, dirty FROM versions").Scan(&v, &dirty); err != nil || v != -1 || !dirty {
+		t.Fatalf("engine did not record (-1, dirty): %d %v %v", v, dirty, err)
+	}
+	older := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{}}
+	if err := migrate.Up(ctx, c, []migrate.Source{older}); err == nil || !strings.Contains(err.Error(), "source service is dirty with no applied version") {
+		t.Fatalf("older build hid a dirty state: %v", err)
+	}
+	st, err := migrate.Versions(ctx, c, []migrate.Source{older})
+	if err != nil || st[0].Version != 0 || !st[0].Dirty {
+		t.Fatalf("versions %v %v", st, err)
+	}
+	// Recovery in the build with the file, after checking the schema.
+	if err := migrate.Force(ctx, c, newer, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate.Up(ctx, c, []migrate.Source{older}); err != nil {
+		t.Fatalf("older build after recovery: %v", err)
+	}
+	st, err = migrate.Versions(ctx, c, []migrate.Source{older})
+	if err != nil || st[0].Version != 0 || st[0].Dirty {
+		t.Fatalf("recovered state %v %v", st, err)
+	}
 }

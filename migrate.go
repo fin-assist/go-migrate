@@ -189,15 +189,21 @@ func appliedWithoutFile(v uint, name string) error {
 // emptyApplied: the source has no migration files, but its version table records a
 // version (an older image of a source whose first migration a newer image applied).
 // Up and Down refuse it like any applied version without a file; Versions reports it.
+// noVersion marks a dirty row without a version: golang-migrate records (-1, dirty)
+// when a rollback of the first migration fails.
 type emptyApplied struct {
-	source  string
-	version uint
-	dirty   bool
+	source    string
+	version   uint
+	dirty     bool
+	noVersion bool
 }
 
 // Error points to a build that has the source's files: Force cannot work in this one.
 // A dirty version refuses Down there too (ErrDirty), so it needs Force in that build.
 func (e emptyApplied) Error() string {
+	if e.noVersion {
+		return fmt.Sprintf("source %s is dirty with no applied version (a failed rollback of its first migration): this build has no files of the source; check the schema and force a version with a build that has the file, or skip this migration run", e.source)
+	}
 	prefix := fmt.Sprintf("applied version %d of source %s has no migration file: this build has no files of the source; ", e.version, e.source)
 	if e.dirty {
 		return prefix + "the version is dirty: check the schema and force a version with a build that has the file, or skip this migration run"
@@ -460,6 +466,9 @@ func openMigration(cfg Config, src Source) (migrationSession, error) {
 		_ = drv.Close()
 		if err != nil {
 			return nil, safeerror.Wrap("read migration version failed", err)
+		}
+		if v == database.NilVersion && dirty {
+			return nil, emptyApplied{source: src.Name, dirty: true, noVersion: true}
 		}
 		if v != database.NilVersion {
 			return nil, emptyApplied{source: src.Name, version: uint(v), dirty: dirty}

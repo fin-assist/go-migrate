@@ -186,3 +186,25 @@ func TestUnitEmptySourceWithDirtyRecordedVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestUnitEmptySourceWithDirtyNilVersion(t *testing.T) {
+	cfg := DefaultConfig("postgres://localhost/db")
+	r := fakeRunner(&fakeQueue{}, &fakeSession{})
+	r.open = func(Config, Source) (migrationSession, error) {
+		return nil, emptyApplied{source: "service", dirty: true, noVersion: true}
+	}
+	empty := Source{Name: "service", Table: "schema_migrations", FS: fstest.MapFS{}}
+	for name, err := range map[string]error{
+		"up":   r.up(context.Background(), cfg, []Source{empty}),
+		"down": r.down(context.Background(), cfg, empty, 1),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "source service is dirty with no applied version") ||
+			strings.Contains(err.Error(), "applied version 0") || strings.Contains(err.Error(), "Down") {
+			t.Fatalf("%s: dirty nil hint %v", name, err)
+		}
+	}
+	st, err := r.versions(context.Background(), cfg, []Source{empty})
+	if err != nil || len(st) != 1 || st[0].Version != 0 || !st[0].Dirty {
+		t.Fatalf("versions %v %v", st, err)
+	}
+}
