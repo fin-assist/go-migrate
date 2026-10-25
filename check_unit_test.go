@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -62,7 +63,7 @@ func TestUnitCheckWalkAndFailures(t *testing.T) {
 			case "irreversible":
 				src.FS.(fstest.MapFS)["000001_a.down.sql"].Data = []byte(" -- irreversible\nSELECT 1")
 			case "missing-down":
-				src.FS = fstest.MapFS{"1_a.up.sql": {}, "1_a.down.sql": {}}
+				src.FS = fstest.MapFS{"002_a.up.sql": {}, "002_a.down.sql": {}}
 			case "read-down":
 				src.FS = unreadableDown{src.FS}
 			case "empty":
@@ -97,3 +98,51 @@ func (f unreadableDown) Open(name string) (fs.File, error) {
 	}
 	return f.FS.Open(name)
 }
+
+func TestUnitIrreversibleMatchesNumericVersionWithoutFixedWidth(t *testing.T) {
+	for _, prefix := range []string{"1", "001", "000001", "00000001"} {
+		for _, marked := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/marked=%t", prefix, marked), func(t *testing.T) {
+				body := "DROP TABLE item;"
+				if marked {
+					body = "  -- irreversible\n" + body
+				}
+				src := Source{Name: "consumer", FS: fstest.MapFS{
+					prefix + "_item.up.sql": {}, prefix + "_item.down.sql": {Data: []byte(body)},
+					"002_other.down.sql": {}, "notes.txt": {}, "1_bad-name.down.sql": {},
+					"18446744073709551616_overflow.down.sql": {},
+				}}
+				got, err := irreversible(src, 1)
+				if err != nil || got != marked {
+					t.Fatalf("marker=%t err=%v", got, err)
+				}
+			})
+		}
+	}
+}
+
+func TestUnitIrreversibleRejectsMissingAndAmbiguousNumericVersions(t *testing.T) {
+	for name, files := range map[string]fstest.MapFS{
+		"missing":          {"002_item.down.sql": {}},
+		"ambiguous-widths": {"001_item.down.sql": {}, "000001_item.down.sql": {}},
+		"ambiguous-names":  {"001_item.down.sql": {}, "000001_other.down.sql": {}},
+		"directory":        {"001_item.down.sql": {Mode: fs.ModeDir}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := irreversible(Source{Name: "consumer", FS: files}, 1); err == nil {
+				t.Fatal("missing or ambiguous down file accepted")
+			}
+		})
+	}
+}
+
+func TestUnitIrreversiblePropagatesDirectoryReadFailure(t *testing.T) {
+	_, err := irreversible(Source{Name: "consumer", FS: unreadableRoot{}}, 1)
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("directory failure lost: %v", err)
+	}
+}
+
+type unreadableRoot struct{}
+
+func (unreadableRoot) Open(string) (fs.File, error) { return nil, fs.ErrPermission }

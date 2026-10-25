@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 
 	engine "github.com/golang-migrate/migrate/v4"
@@ -84,8 +85,25 @@ func cleanVersion(m migrationSession) (uint, error) {
 	return v, nil
 }
 func irreversible(src Source, v uint) (bool, error) {
-	matches, err := fs.Glob(src.FS, fmt.Sprintf("%06d_*.down.sql", v))
-	if err != nil || len(matches) != 1 {
+	entries, err := fs.ReadDir(src.FS, ".")
+	if err != nil {
+		return false, err
+	}
+	var matches []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		parts := fileName.FindStringSubmatch(entry.Name())
+		if parts == nil || parts[3] != "down" {
+			continue
+		}
+		version, err := strconv.ParseUint(parts[1], 10, 64)
+		if err == nil && version == uint64(v) {
+			matches = append(matches, entry.Name())
+		}
+	}
+	if len(matches) != 1 {
 		return false, fmt.Errorf("%s: down file of %d: %v", src.Name, v, matches)
 	}
 	b, err := fs.ReadFile(src.FS, matches[0])
