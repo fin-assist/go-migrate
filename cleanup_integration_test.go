@@ -23,13 +23,7 @@ func TestIntegrationFailedDriverInitializationClosesOwnedConnections(t *testing.
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	var active int
-	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait')").Scan(&active); err != nil {
-		t.Fatal(err)
-	}
-	if active != 0 {
-		t.Fatalf("failed initialization leaked %d migration connections", active)
-	}
+	waitRunnerDisconnected(t, conn)
 	if err := migrate.Up(t.Context(), migrate.DefaultConfig(dsn), []migrate.Source{src}); err != nil {
 		t.Fatal("corrected run blocked", err)
 	}
