@@ -1,4 +1,4 @@
-module github.com/fin-assist/go-library-template
+module github.com/fin-assist/go-migrate
 
 go 1.26.0
 

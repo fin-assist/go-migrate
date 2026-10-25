@@ -53,7 +53,7 @@
 
 Официальные источники: [preset и ref](https://docs.renovatebot.com/config-presets/), [шаблоны metadata](https://docs.renovatebot.com/templates/), [закрытые major/group PR](https://docs.renovatebot.com/key-concepts/pull-requests/), [Dashboard](https://docs.renovatebot.com/key-concepts/dashboard/), [config](https://docs.renovatebot.com/configuration-options/), [merge REST API](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request).
 
-Опубликованные presets: [config-only ветка](https://github.com/fin-assist/go-library-template/tree/renovate-policy).
+Presets этого репозитория указывают на собственную config-only ветку `fin-assist/go-migrate:renovate-policy`. Её bootstrap, токены и включение controller выполняются отдельно владельцем; этот PR их не создаёт и не меняет.
 
 Проверка опубликованных refs настоящим resolver: `RENOVATE_RUNTIME=<temporary npm prefix> node scripts/verify_renovate_presets.mjs`; ограничить процесс 180 секундами. Для повышения API-лимита можно передать отдельный read credential в `RENOVATE_TOKEN`; код его не выводит.
 
@@ -75,7 +75,7 @@ Install scripts отключены намеренно: в этом fixture от�
 
 ## Пустой библиотечный шаблон и coverage FIN-243
 
-В шаблоне нет исполняемого production-кода после согласованного исключения только internal/pgtest. По решению FIN-247 только исходный fin-assist/go-library-template сообщает N/A на точный header-only профиль после реально выполненного успешного suite без skips/failures. Все три набора, lint, миграции и прочие проверки обязательны; при появлении production statements автоматически действуют три независимых порога80. Созданные из шаблона библиотеки не наследуют N/A даже с прежним module path. См. [testing.md](testing.md). `go` остаётся и в requiredChecks, и в ciChecks контроллера: dependency-only обновление подчиняется тем же проверкам.
+go-migrate содержит production runner и публичный harness: три независимых порога80 обязательны, публичные helpers включены. Исключён только exact internal/pgtest; N/A принадлежит только исходному fin-assist/go-library-template и здесь недоступно. См. [testing.md](testing.md). `go` остаётся и в requiredChecks, и в ciChecks контроллера: dependency-only обновление подчиняется тем же проверкам.
 
 До FIN-247 пустой профиль делал required go постоянно красным, а при RENOVATE_POLICY_ENABLED=true controller после одного retry закрывал бы dependency-only PR и помещал версии в exact quarantine. 25.10.2026 в FIN-245 владелец сначала разрешил операционную паузу в библиотечном шаблоне и трёх сервисных каркасах, затем отдельно поручил вернуть true; включение и успешные controller runs зафиксированы в FIN-245. Этот PR не меняет флаг, защиты, существующие PR или quarantine. Состояние переменной проверяется в GitHub, документация не подтверждает её текущее значение.
 

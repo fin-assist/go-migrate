@@ -1,10 +1,10 @@
 # Instructions for code agents
 
-A Go library of «Понятные финансы» (B2C personal finance: OFX statement import from T-Bank, operations, analytics,
-LLM assistant), made from `fin-assist/go-library-template`. The Go services (`bank-bff`, `user`,
-`bank-statement-data`, `analytics`, `assistant`, made from `fin-assist/go-service-template`) import it at a tagged
-version. Read by Claude Code (through `CLAUDE.md`) and by Codex. This file is the orientation map: read it and
-`README.md` first, then open only what the task touches.
+`fin-assist/go-migrate` (FIN-251 / FIN-248) is the shared PostgreSQL migration runner,
+extracted from the service template. The root `migrate` package owns dedicated migration
+connections, ordered sources and separate version tables. Public `migratetest` accepts an
+explicit admin DSN / caller-owned empty database; it never reads environment or starts
+containers. Services adopt the tagged library in their own PRs. Read `README.md` first.
 
 ## Keep this file current
 
@@ -35,8 +35,12 @@ for itself: what it does, its YouTrack issue, which services use it.
 | Package documentation: what the library does, what it needs from the service | `doc.go` |
 | Public API of the library | root package (`*.go`); subpackages only for parts with different consumers |
 | Implementation details | `internal/` |
-| Migration source for the service runner (`Migrations`, `MigrationsName`, `MigrationsTable`) | `migrations.go`, `migrations/` |
-| PostgreSQL for tests, up → down → up check | `internal/pgtest/` (mirrors `migratetest` of the service template) |
+| Ordered source runner, queue/timeouts and operations | `migrate.go` |
+| Error-returning up/down/up check | `check.go` |
+| Safe operator error text with typed diagnostics | `internal/safeerror/` (included in every denominator) |
+| Public consumer testing helpers | `migratetest/` (included in all coverage denominators) |
+| SQL fixtures only; no runtime migration metadata or dummy migrations | `testdata/` |
+| Repository-only PostgreSQL test support | `internal/pgtest/` (the sole exact coverage exclusion) |
 | Integration guide for services | `README.md`, «Внедрение» |
 | Versions, compatibility, releases, Renovate | `docs/releasing.md`, `CHANGELOG.md`, `.github/workflows/release.yml`, `renovate.json` |
 | Independent statements coverage guards and changelog checks | `scripts/` |
@@ -91,6 +95,16 @@ The same priorities and rules as the services (`AGENTS.md` of `fin-assist/go-ser
   (`func() time.Time`), settings in an options struct with documented defaults. No `init()` with side effects, no
   package-level mutable variables, no reading the environment; `forbidigo` rejects `slog.Default`, `log.Print*`,
   `prometheus.MustRegister`, `promauto` and `os.Getenv` outside tests.
+- **Migration runner exception:** this library opens and closes its own dedicated queue/engine connections;
+  it never uses an application transaction. The caller supplies primary DSN, context, timeouts and logger.
+  `DefaultConfig` uses discard logging; nil logger is safe. Cancellation is checked between native
+  per-file Steps under the continuously held queue lock; never use upstream GracefulStop (v4.20.1 race).
+  Preserve Down ErrShortLimit.Short and genuine SQL errors when cancellation races with a failure.
+  Wrap native diagnostics in safe stage-only Error text; never forward native Printf logs.
+  ErrInvalidDSN never retains the unsafe parser cause. Other causes remain accessible through
+  errors.Is/As for programmatic handling only; never log/expose unwrapped diagnostics.
+  Public harness owns only databases created by
+  `migratetest.DSN`; `CheckUpDownUp` never creates/drops the caller-supplied database.
 - **The service owns the transaction.** A library that writes together with the effect (idempotency, outbox,
   tombstone) takes it through a consumer interface — `interface{ Tx(context.Context) (pgx.Tx, bool) }`, implemented
   by `postgres.DB` of the service template — and returns an error when there is none, instead of writing outside it.

@@ -1,10 +1,15 @@
 # Изменения
 
-Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии и выпуск — [docs/releasing.md](docs/releasing.md). Каждый PR, который меняет API или поведение библиотеки, добавляет строку в «Unreleased»; при выпуске раздел получает номер версии и дату.
+Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), выпуск — [docs/releasing.md](docs/releasing.md). Каждый PR добавляет запись в Unreleased.
 
 ## [Unreleased]
 
+### Добавлено
+
+- FIN-251: общий PostgreSQL migration runner с независимыми version tables, последовательными источниками, advisory queue, DDL/statement/wait timeout, dirty/force/down/empty-source поведением; публичный migratetest с явным adminDSN, отдельной тестовой БД и up/down/up. Unit без сети, реальные PG18 Integration и внешний consumer API; независимые statements gates80 сохраняются, публичный harness включён в denominator.
+
 ### Изменено
 
-- FIN-247: только исходный пустой go-library-template сообщает N/A для coverage после обязательного успешного выполнения всех трёх наборов. При появлении production statements автоматически действуют прежние total80; новые библиотеки не наследуют исключение. Проверки suites, required go, защиты и Controller Renovate сохранены; runtime и публичный API не менялись.
-- FIN-243: независимые statements-профили unit/integration/API и обязательные пороги80 с готовым go-test-coverage v2.20.1; guards пустых/пропущенных наборов, исполнение Example/Fuzz и проверки публичного Go API. Только тестовый пакет internal/pgtest исключён из одинакового знаменателя всех трёх уровней; его тесты продолжают выполняться. Документирован эффект постоянно красного go на Renovate retry/close/quarantine и необходимость отдельного решения об операционной паузе. Runtime и экспортируемый API не менялись.
+- FIN-251: обычный текст ошибок и логи не раскрывают migration SQL/DSN/error.Detail. Нативные SQL/engine diagnostics сохраняются для errors.Is/As через безопасный private wrapper; malformed DSN возвращает ErrInvalidDSN без небезопасного ParseError в цепочке. Raw engine Printf logging отключён, структурированные события runner сохранены.
+
+- FIN-251: DefaultConfig использует discard logger вместо глобального slog.Default; сервис передаёт Logger явно. Закрытие engine/драйвера завершается до освобождения migration queue. Переход между файлами выполняется native Steps под непрерывной общей queue lock без race-prone GracefulStop; сохраняются ErrShortLimit и dirty/clean state. Отмена после начала файла больше не возвращает ложный nil: после безопасной остановки возвращается context error, реальная SQL-ошибка сохраняется. Ошибка инициализации version table также закрывает физическое подключение, которое upstream WithInstance не возвращает в sql.DB; нормальное закрытие драйвера не меняется. Starter migration metadata удалены; собственных runtime SQL у runner нет.

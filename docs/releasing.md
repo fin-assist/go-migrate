@@ -50,6 +50,8 @@
 
 ## Миграции
 
+У `go-migrate` нет собственных runtime migrations и metadata exports: SQL в `testdata/` — только fixtures. Ниже описаны источники библиотек-потребителей runner; их публикация и SQL version tables принадлежат соответствующей библиотеке. Публичные `migrate` и `migratetest` — версионируемый API этого модуля.
+
 Миграции библиотеки — отдельный источник golang-migrate со своей таблицей версий `<библиотека>_schema_migrations` ([FIN-115](https://finassist.youtrack.cloud/issue/FIN-115), `docs/migrations.md` в `fin-assist/go-service-template`). Сервис применяет их командой `migrate up` до своих.
 
 - Выпущенный файл миграции не меняется: он уже применён в базах сервисов. Изменение — новым файлом (CI запрещает правку и удаление существующих).
