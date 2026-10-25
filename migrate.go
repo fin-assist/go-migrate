@@ -487,7 +487,41 @@ func openMigration(cfg Config, src Source) (migrationSession, error) {
 		return nil, safeerror.Wrap("initialize migration engine failed", err)
 	}
 	m.LockTimeout = cfg.WaitTimeout
-	return m, nil
+	return newEngineSession(m, drv), nil
+}
+
+// newEngineSession pairs the engine with the driver it was built on, so Version reads the
+// driver's own row (FIN-314).
+func newEngineSession(m *migrate.Migrate, drv database.Driver) migrationSession {
+	return engineSession{Migrate: m, readVersion: drv.Version}
+}
+
+// engineSession reads the version from the driver instead of Migrate.Version, which maps
+// the nil version to ErrNilVersion and drops the dirty flag. golang-migrate records
+// (-1, dirty) when the rollback of the first migration fails; Versions must report it as
+// dirty 0, not as a clean "nothing applied" (FIN-314).
+type engineSession struct {
+	*migrate.Migrate
+	readVersion func() (int, bool, error)
+}
+
+// Version returns the applied version, ErrNilVersion for a clean empty table and
+// (0, true, nil) for a dirty row without a version.
+func (s engineSession) Version() (uint, bool, error) {
+	return driverVersion(s.readVersion)
+}
+
+func driverVersion(read func() (int, bool, error)) (uint, bool, error) {
+	v, dirty, err := read()
+	switch {
+	case err != nil:
+		return 0, false, err
+	case v == database.NilVersion && dirty:
+		return 0, true, nil
+	case v < 0:
+		return 0, false, migrate.ErrNilVersion
+	}
+	return uint(v), dirty, nil
 }
 
 // waitTurn serialises runs of one source across processes. golang-migrate takes its own
