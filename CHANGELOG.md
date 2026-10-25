@@ -4,7 +4,11 @@
 
 ## [Unreleased]
 
+## [v0.1.0] — 2026-10-25
+
 ### Добавлено
+
+- FIN-254: подготовлен первый выпуск go-migrate v0.1.0; публикация тега и GitHub Release выполняется владельцем после merge release PR.
 
 - FIN-251: общий PostgreSQL migration runner с независимыми version tables, последовательными источниками, advisory queue, DDL/statement/wait timeout, dirty/force/down/empty-source поведением; публичный migratetest с явным adminDSN, отдельной тестовой БД и up/down/up. Unit без сети, реальные PG18 Integration и внешний consumer API; независимые statements gates80 сохраняются, публичный harness включён в denominator.
 
