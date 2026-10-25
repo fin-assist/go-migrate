@@ -8,6 +8,8 @@ import (
 
 	engine "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database"
+	dbstub "github.com/golang-migrate/migrate/v4/database/stub"
+	srcstub "github.com/golang-migrate/migrate/v4/source/stub"
 )
 
 // TestUnitDriverVersionKeepsDirtyNilVersion reproduces FIN-314: the engine's Version maps the
@@ -65,5 +67,39 @@ func TestUnitDirtyNilVersionIsReportedAndLeftToTheEngine(t *testing.T) {
 	}
 	if err := r.check(context.Background(), cfg, source()); err == nil || !strings.Contains(err.Error(), "dirty at version 0") {
 		t.Fatalf("walk started on a dirty source: %v", err)
+	}
+}
+
+// TestUnitEngineSessionKeepsDirtyFlagTheEngineDrops builds the real golang-migrate engine on
+// its in-memory stub drivers: the engine's own Version loses the dirty flag of (-1, dirty),
+// the session returned by newEngineSession (used by openMigration) keeps it. openMigration
+// itself needs PostgreSQL (pgx driver); its wiring is covered by the integration/API tests.
+func TestUnitEngineSessionKeepsDirtyFlagTheEngineDrops(t *testing.T) {
+	drv, err := dbstub.WithInstance(nil, &dbstub.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := (&srcstub.Stub{}).Open("stub://")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := engine.NewWithInstance("stub", src, "stub", drv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := drv.SetVersion(database.NilVersion, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := m.Version(); !errors.Is(err, engine.ErrNilVersion) {
+		t.Fatalf("engine Version %v: the upstream loss of the dirty flag changed, revisit FIN-314", err)
+	}
+	if v, dirty, err := newEngineSession(m, drv).Version(); v != 0 || !dirty || err != nil {
+		t.Fatalf("session version (%d, %v, %v), want dirty 0", v, dirty, err)
+	}
+	if err := drv.SetVersion(database.NilVersion, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := newEngineSession(m, drv).Version(); !errors.Is(err, engine.ErrNilVersion) {
+		t.Fatalf("clean empty table: %v, want ErrNilVersion", err)
 	}
 }

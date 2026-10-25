@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -44,8 +45,10 @@ func TestIntegrationFailedFirstRollbackIsReportedDirty(t *testing.T) {
 	if err := migrate.Up(ctx, c, []migrate.Source{src}); !errors.As(err, &dirty) {
 		t.Fatalf("up on a dirty source: %v", err)
 	}
-	if err := migrate.CheckUpDownUp(ctx, c, src); err == nil {
-		t.Fatal("up/down/up walk started on a dirty source")
+	// The walk must refuse before its first step (cleanVersion), not after the engine's ErrDirty.
+	err = migrate.CheckUpDownUp(ctx, c, src)
+	if err == nil || !strings.Contains(err.Error(), "dirty at version 0") || errors.As(err, &dirty) {
+		t.Fatalf("up/down/up walk on a dirty source: %v, want the dirty 0 refusal before any step", err)
 	}
 	// Recovery by the documented path: the schema still has table a, drop it and force 0.
 	if _, err := conn.Exec(ctx, "DROP TABLE a"); err != nil {

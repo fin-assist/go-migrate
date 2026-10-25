@@ -487,7 +487,13 @@ func openMigration(cfg Config, src Source) (migrationSession, error) {
 		return nil, safeerror.Wrap("initialize migration engine failed", err)
 	}
 	m.LockTimeout = cfg.WaitTimeout
-	return engineSession{Migrate: m, readVersion: drv.Version}, nil
+	return newEngineSession(m, drv), nil
+}
+
+// newEngineSession pairs the engine with the driver it was built on, so Version reads the
+// driver's own row (FIN-314).
+func newEngineSession(m *migrate.Migrate, drv database.Driver) migrationSession {
+	return engineSession{Migrate: m, readVersion: drv.Version}
 }
 
 // engineSession reads the version from the driver instead of Migrate.Version, which maps
