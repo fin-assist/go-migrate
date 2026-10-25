@@ -10,6 +10,8 @@
 
 ### Изменено
 
+- FIN-251: публичный Validate возвращает ошибку для nil FS до файлового/сетевого IO вместо panic; добавлены Unit и внешний consumer API regression.
+
 - FIN-251: обычный текст ошибок и логи не раскрывают migration SQL/DSN/error.Detail. Нативные SQL/engine diagnostics сохраняются для errors.Is/As через безопасный private wrapper; malformed DSN возвращает ErrInvalidDSN без небезопасного ParseError в цепочке. Raw engine Printf logging отключён, структурированные события runner сохранены.
 
 - FIN-251: DefaultConfig использует discard logger вместо глобального slog.Default; сервис передаёт Logger явно. Закрытие engine/драйвера завершается до освобождения migration queue. Переход между файлами выполняется native Steps под непрерывной общей queue lock без race-prone GracefulStop; сохраняются ErrShortLimit и dirty/clean state. Отмена после начала файла больше не возвращает ложный nil: после безопасной остановки возвращается context error, реальная SQL-ошибка сохраняется. Ошибка инициализации version table также закрывает физическое подключение, которое upstream WithInstance не возвращает в sql.DB; нормальное закрытие драйвера не меняется. Starter migration metadata удалены; собственных runtime SQL у runner нет.

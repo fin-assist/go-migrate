@@ -96,6 +96,9 @@ var fileName = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.(up|down)\.sql$`)
 // version has exactly one up and one down file, and versions are unique. A down file is
 // mandatory (FIN-115): an irreversible step still has one, which fails with an explanation.
 func Validate(src Source) error {
+	if src.FS == nil {
+		return fmt.Errorf("source %s: files are required", src.Name)
+	}
 	entries, err := fs.ReadDir(src.FS, ".")
 	if err != nil {
 		return fmt.Errorf("source %s: %w", src.Name, err)

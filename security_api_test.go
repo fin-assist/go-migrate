@@ -39,6 +39,12 @@ func hasSQLState(err error, code string) bool {
 	pgerr := postgresError(err)
 	return pgerr != nil && pgerr.Code == code
 }
+
+func TestAPIConsumerValidatorRejectsNilFilesystem(t *testing.T) {
+	if err := migrate.Validate(migrate.Source{}); err == nil || !strings.Contains(err.Error(), "files are required") {
+		t.Fatalf("zero-value source must be rejected without a panic: %v", err)
+	}
+}
 func TestAPIConsumerErrorsAndLogsDoNotExposeSQLOrDSN(t *testing.T) {
 	dsn := consumerDatabase(t)
 	var logs bytes.Buffer

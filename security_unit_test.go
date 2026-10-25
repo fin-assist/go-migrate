@@ -41,3 +41,9 @@ func TestUnitEngineErrorBoundaryAndInvalidDSN(t *testing.T) {
 		t.Fatal("unsafe migration connection configuration")
 	}
 }
+
+func TestUnitValidateRejectsNilFilesWithoutIO(t *testing.T) {
+	if err := Validate(Source{Name: "missing-files"}); err == nil || !strings.Contains(err.Error(), "files are required") {
+		t.Fatalf("nil filesystem must return a validation error: %v", err)
+	}
+}
