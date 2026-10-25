@@ -48,3 +48,22 @@ func TestAPIConsumerDeployFailsWhenAppliedFileIsGone(t *testing.T) {
 		t.Fatal("two files of one version accepted")
 	}
 }
+
+// TestAPIConsumerOlderImageWithEmptySourceRefusesDeploy: the Job of an older image whose
+// service source has no SQL files yet must fail after a newer image applied version 1.
+func TestAPIConsumerOlderImageWithEmptySourceRefusesDeploy(t *testing.T) {
+	dsn := consumerDatabase(t)
+	ctx := t.Context()
+	c := migrate.DefaultConfig(dsn)
+	if err := migrate.Up(ctx, c, []migrate.Source{{Name: "service", Table: "service_versions", FS: sub(t, "library")}}); err != nil {
+		t.Fatal(err)
+	}
+	older := []migrate.Source{{Name: "service", Table: "service_versions", FS: fstest.MapFS{}}}
+	if err := migrate.Up(ctx, c, older); err == nil || !strings.Contains(err.Error(), "applied version 1 of source service has no migration file") {
+		t.Fatalf("older image deploy must fail: %v", err)
+	}
+	st, err := migrate.Versions(ctx, c, older)
+	if err != nil || st[0].Version != 1 {
+		t.Fatalf("versions must report the recorded state: %v %v", st, err)
+	}
+}

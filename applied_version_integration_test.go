@@ -116,3 +116,65 @@ func pgtestExec(t *testing.T, dsn, sql string) (pgconn.CommandTag, error) {
 	defer func() { _ = conn.Close(context.Background()) }()
 	return conn.Exec(t.Context(), sql)
 }
+
+// TestIntegrationEmptySourceWithAppliedVersionFails: a newer image applied the first
+// migration of a source that the older image ships without SQL files.
+func TestIntegrationEmptySourceWithAppliedVersionFails(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	ctx := context.Background()
+	c := migrate.DefaultConfig(dsn)
+	newer := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"1_a.up.sql": sqlFile("CREATE TABLE a(id bigint)"), "1_a.down.sql": sqlFile("DROP TABLE a"),
+	}}
+	older := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{}}
+	fresh := migrate.Source{Name: "fresh", Table: "fresh_versions", FS: fstest.MapFS{}}
+	if err := migrate.Up(ctx, c, []migrate.Source{fresh, newer}); err != nil {
+		t.Fatal(err)
+	}
+	for name, run := range map[string]func() error{
+		"up":   func() error { return migrate.Up(ctx, c, []migrate.Source{fresh, older}) },
+		"down": func() error { return migrate.Down(ctx, c, older, 1) },
+	} {
+		if err := run(); err == nil || !strings.Contains(err.Error(), "applied version 1 of source service has no migration file") {
+			t.Fatalf("%s: empty source hid applied version: %v", name, err)
+		}
+	}
+	st, err := migrate.Versions(ctx, c, []migrate.Source{fresh, older})
+	if err != nil || st[0].Version != 0 || st[1].Version != 1 || st[1].Dirty || !exists(t, dsn, "a") {
+		t.Fatalf("state %v %v", st, err)
+	}
+}
+
+// TestIntegrationRecordedZeroFromOldForceRecovers reproduces the v0.1.x state after
+// "force <source> 0": version 0 recorded without a file, every Up silently skipped.
+func TestIntegrationRecordedZeroFromOldForceRecovers(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	ctx := context.Background()
+	c := migrate.DefaultConfig(dsn)
+	src := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+		"1_a.up.sql": sqlFile("CREATE TABLE a(id bigint)"), "1_a.down.sql": sqlFile("DROP TABLE a"),
+	}}
+	if _, err := pgtestExec(t, dsn, "CREATE TABLE versions (version bigint NOT NULL PRIMARY KEY, dirty boolean NOT NULL); INSERT INTO versions VALUES (0, false)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate.Up(ctx, c, []migrate.Source{src}); err == nil || !strings.Contains(err.Error(), "applied version 0 of source service has no migration file") {
+		t.Fatalf("recorded 0 accepted: %v", err)
+	}
+	if exists(t, dsn, "a") {
+		t.Fatal("up applied a file over an unknown version")
+	}
+	if err := migrate.Force(ctx, c, src, 0); err != nil {
+		t.Fatal(err)
+	}
+	st, err := migrate.Versions(ctx, c, []migrate.Source{src})
+	if err != nil || st[0].Version != 0 || st[0].Dirty {
+		t.Fatalf("after force 0: %v %v", st, err)
+	}
+	if err := migrate.Up(ctx, c, []migrate.Source{src}); err != nil || !exists(t, dsn, "a") {
+		t.Fatalf("up after recovery: %v", err)
+	}
+	st, err = migrate.Versions(ctx, c, []migrate.Source{src})
+	if err != nil || st[0].Version != 1 || st[0].Dirty {
+		t.Fatalf("final state %v %v", st, err)
+	}
+}

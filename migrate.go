@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
@@ -176,10 +177,25 @@ func appliedVersionKnown(m migrationSession, src Source) error {
 		return err
 	}
 	if !known[uint64(v)] {
-		return fmt.Errorf("applied version %d of source %s has no migration file: check the schema, restore the file, force an existing version, or force 0 when nothing is applied", v, src.Name)
+		return appliedWithoutFile(v, src.Name)
 	}
 	return nil
 }
+
+func appliedWithoutFile(v uint, name string) error {
+	return fmt.Errorf("applied version %d of source %s has no migration file: check the schema, restore the file, force an existing version, or force 0 when nothing is applied", v, name)
+}
+
+// emptyApplied: the source has no migration files, but its version table records a
+// version (an older image of a source whose first migration a newer image applied).
+// Up and Down refuse it like any applied version without a file; Versions reports it.
+type emptyApplied struct {
+	source  string
+	version uint
+	dirty   bool
+}
+
+func (e emptyApplied) Error() string { return appliedWithoutFile(e.version, e.source).Error() }
 
 func isSQL(name string) bool {
 	return len(name) > 4 && name[len(name)-4:] == ".sql"
@@ -271,6 +287,10 @@ func (r runner) versions(ctx context.Context, cfg Config, sources []Source) ([]S
 			st.Version, st.Dirty = v, dirty
 			return safeerror.Wrap("read migration version failed", err)
 		})
+		var recorded emptyApplied
+		if errors.As(err, &recorded) {
+			st.Version, st.Dirty, err = recorded.version, recorded.dirty, nil
+		}
 		if err != nil && !errors.Is(err, errEmpty) {
 			return nil, fmt.Errorf("source %s: %w", s.Name, err)
 		}
@@ -427,7 +447,14 @@ func openMigration(cfg Config, src Source) (migrationSession, error) {
 	}
 	owned.finish(false)
 	if empty(src.FS) {
+		v, dirty, err := drv.Version()
 		_ = drv.Close()
+		if err != nil {
+			return nil, safeerror.Wrap("read migration version failed", err)
+		}
+		if v != database.NilVersion {
+			return nil, emptyApplied{source: src.Name, version: uint(v), dirty: dirty}
+		}
 		return nil, errEmpty
 	}
 	files, err := iofs.New(src.FS, ".")

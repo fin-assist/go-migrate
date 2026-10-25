@@ -124,3 +124,29 @@ func TestUnitValidateRejectsSameVersionWithDifferentWidths(t *testing.T) {
 		t.Fatalf("one up and one down of the same version in different widths: %v", err)
 	}
 }
+
+func TestUnitEmptySourceWithRecordedVersion(t *testing.T) {
+	cfg := DefaultConfig("postgres://localhost/db")
+	recorded := emptyApplied{source: "service", version: 5}
+	open := func(Config, Source) (migrationSession, error) { return nil, recorded }
+	r := fakeRunner(&fakeQueue{}, &fakeSession{})
+	r.open = open
+	empty := Source{Name: "service", Table: "schema_migrations", FS: fstest.MapFS{}}
+	for name, err := range map[string]error{
+		"up":   r.up(context.Background(), cfg, []Source{empty}),
+		"down": r.down(context.Background(), cfg, empty, 1),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "applied version 5 of source service has no migration file") {
+			t.Fatalf("%s: recorded version of an empty source ignored: %v", name, err)
+		}
+	}
+	recorded.dirty = true
+	st, err := r.versions(context.Background(), cfg, []Source{empty})
+	if err != nil || len(st) != 1 || st[0].Version != 5 || !st[0].Dirty {
+		t.Fatalf("versions %v %v", st, err)
+	}
+	r.open = func(Config, Source) (migrationSession, error) { return nil, errEmpty }
+	if err := r.up(context.Background(), cfg, []Source{empty}); err != nil {
+		t.Fatalf("empty source without a version must be skipped: %v", err)
+	}
+}
