@@ -25,7 +25,8 @@ func TestUnitUpAndDownRefuseAppliedVersionWithoutFile(t *testing.T) {
 			} else {
 				err = r.down(context.Background(), cfg, source(), 1)
 			}
-			if err == nil || !strings.Contains(err.Error(), "applied version 7 of source service has no migration file") {
+			if err == nil || !strings.Contains(err.Error(), "applied version 7 of source service has no migration file") ||
+				!strings.HasSuffix(err.Error(), "force an existing version, or force 0 when nothing is applied") {
 				t.Fatalf("false success: %v", err)
 			}
 			if steps != 0 || m.closed != 1 || q.closed != 1 {

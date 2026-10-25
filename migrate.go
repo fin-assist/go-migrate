@@ -176,7 +176,7 @@ func appliedVersionKnown(m migrationSession, src Source) error {
 		return err
 	}
 	if !known[uint64(v)] {
-		return fmt.Errorf("applied version %d of source %s has no migration file: check the schema, restore the file or force an existing version", v, src.Name)
+		return fmt.Errorf("applied version %d of source %s has no migration file: check the schema, restore the file, force an existing version, or force 0 when nothing is applied", v, src.Name)
 	}
 	return nil
 }
