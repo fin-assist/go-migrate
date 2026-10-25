@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
 	pgxmigrate "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5"
@@ -93,19 +94,27 @@ var errEmpty = errors.New("no migration files")
 var fileName = regexp.MustCompile(`^(\d+)_([a-z0-9_]+)\.(up|down)\.sql$`)
 
 // Validate checks the files of a source: every name matches NNN_name.(up|down).sql, every
-// version has exactly one up and one down file, and versions are unique. A down file is
-// mandatory (FIN-115): an irreversible step still has one, which fails with an explanation.
+// version has exactly one up and one down file, and versions are unique. Versions are
+// compared numerically, so 1_a.up.sql and 01_a.up.sql are the same version and rejected
+// together. A down file is mandatory (FIN-115): an irreversible step still has one, which
+// fails with an explanation.
 func Validate(src Source) error {
+	_, err := sourceVersions(src)
+	return err
+}
+
+// sourceVersions validates the files of src and returns its migration versions.
+func sourceVersions(src Source) (map[uint64]bool, error) {
 	if src.FS == nil {
-		return fmt.Errorf("source %s: files are required", src.Name)
+		return nil, fmt.Errorf("source %s: files are required", src.Name)
 	}
 	entries, err := fs.ReadDir(src.FS, ".")
 	if err != nil {
-		return fmt.Errorf("source %s: %w", src.Name, err)
+		return nil, fmt.Errorf("source %s: %w", src.Name, err)
 	}
 	type pair struct {
 		name     string
-		up, down bool
+		up, down int
 	}
 	versions := map[uint64]*pair{}
 	for _, e := range entries {
@@ -114,32 +123,92 @@ func Validate(src Source) error {
 		}
 		m := fileName.FindStringSubmatch(e.Name())
 		if m == nil {
-			return fmt.Errorf("source %s: %q does not match NNN_name.up.sql / NNN_name.down.sql", src.Name, e.Name())
+			return nil, fmt.Errorf("source %s: %q does not match NNN_name.up.sql / NNN_name.down.sql", src.Name, e.Name())
 		}
-		v, _ := strconv.ParseUint(m[1], 10, 64)
+		v, err := strconv.ParseUint(m[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("source %s: %q: version is out of range", src.Name, e.Name())
+		}
 		p := versions[v]
 		if p == nil {
 			p = &pair{name: m[2]}
 			versions[v] = p
 		} else if p.name != m[2] {
-			return fmt.Errorf("source %s: version %d is used by %q and %q", src.Name, v, p.name, m[2])
+			return nil, fmt.Errorf("source %s: version %d is used by %q and %q", src.Name, v, p.name, m[2])
 		}
 		switch m[3] {
 		case "up":
-			p.up = true
+			p.up++
 		case "down":
-			p.down = true
+			p.down++
 		}
 	}
+	known := make(map[uint64]bool, len(versions))
 	for v, p := range versions {
-		if !p.up {
-			return fmt.Errorf("source %s: version %d (%s) has no up file", src.Name, v, p.name)
+		if p.up == 0 {
+			return nil, fmt.Errorf("source %s: version %d (%s) has no up file", src.Name, v, p.name)
 		}
-		if !p.down {
-			return fmt.Errorf("source %s: version %d (%s) has no down file", src.Name, v, p.name)
+		if p.down == 0 {
+			return nil, fmt.Errorf("source %s: version %d (%s) has no down file", src.Name, v, p.name)
 		}
+		if p.up > 1 || p.down > 1 {
+			return nil, fmt.Errorf("source %s: version %d (%s) has several up or down files", src.Name, v, p.name)
+		}
+		known[v] = true
+	}
+	return known, nil
+}
+
+// appliedVersionKnown fails when the clean version recorded in the version table has no
+// file in the source (a renamed or deleted applied file, a forced version without a file).
+// golang-migrate reports that case with os.ErrNotExist, the same error as "no next file",
+// so stepping without this check would end as a false "up to date" (FIN-278).
+// A dirty version is left to the engine, which refuses it with ErrDirty.
+func appliedVersionKnown(m migrationSession, src Source) error {
+	v, dirty, err := m.Version()
+	if errors.Is(err, migrate.ErrNilVersion) || (err == nil && dirty) {
+		return nil
+	}
+	if err != nil {
+		return safeerror.Wrap("read migration version failed", err)
+	}
+	known, err := sourceVersions(src)
+	if err != nil {
+		return err
+	}
+	if !known[uint64(v)] {
+		return appliedWithoutFile(v, src.Name)
 	}
 	return nil
+}
+
+func appliedWithoutFile(v uint, name string) error {
+	return fmt.Errorf("applied version %d of source %s has no migration file: check the schema, restore the file, force an existing version, or force 0 when nothing is applied", v, name)
+}
+
+// emptyApplied: the source has no migration files, but its version table records a
+// version (an older image of a source whose first migration a newer image applied).
+// Up and Down refuse it like any applied version without a file; Versions reports it.
+// noVersion marks a dirty row without a version: golang-migrate records (-1, dirty)
+// when a rollback of the first migration fails.
+type emptyApplied struct {
+	source    string
+	version   uint
+	dirty     bool
+	noVersion bool
+}
+
+// Error points to a build that has the source's files: Force cannot work in this one.
+// A dirty version refuses Down there too (ErrDirty), so it needs Force in that build.
+func (e emptyApplied) Error() string {
+	if e.noVersion {
+		return fmt.Sprintf("source %s is dirty with no applied version (a failed rollback of its first migration): this build has no files of the source; check the schema and force a version with a build that has the file, or skip this migration run", e.source)
+	}
+	prefix := fmt.Sprintf("applied version %d of source %s has no migration file: this build has no files of the source; ", e.version, e.source)
+	if e.dirty {
+		return prefix + "the version is dirty: check the schema and force a version with a build that has the file, or skip this migration run"
+	}
+	return prefix + "check the schema and run Down with a build that has the file, or skip this migration run"
 }
 
 func isSQL(name string) bool {
@@ -178,6 +247,9 @@ func (r runner) up(ctx context.Context, cfg Config, sources []Source) error {
 	}
 	for _, s := range sources {
 		err := r.withMigrate(ctx, cfg, s, func(m migrationSession) error {
+			if err := appliedVersionKnown(m, s); err != nil {
+				return err
+			}
 			before, _, _ := m.Version()
 			applied := false
 			for {
@@ -229,6 +301,10 @@ func (r runner) versions(ctx context.Context, cfg Config, sources []Source) ([]S
 			st.Version, st.Dirty = v, dirty
 			return safeerror.Wrap("read migration version failed", err)
 		})
+		var recorded emptyApplied
+		if errors.As(err, &recorded) {
+			st.Version, st.Dirty, err = recorded.version, recorded.dirty, nil
+		}
 		if err != nil && !errors.Is(err, errEmpty) {
 			return nil, fmt.Errorf("source %s: %w", s.Name, err)
 		}
@@ -251,6 +327,9 @@ func (r runner) down(ctx context.Context, cfg Config, src Source, steps int) err
 		return err
 	}
 	return r.withMigrate(ctx, cfg, src, func(m migrationSession) error {
+		if err := appliedVersionKnown(m, src); err != nil {
+			return err
+		}
 		for i := 0; i < steps; i++ {
 			if err := step(ctx, m, -1); err != nil {
 				if i > 0 && errors.Is(err, os.ErrNotExist) {
@@ -266,7 +345,11 @@ func (r runner) down(ctx context.Context, cfg Config, src Source, steps int) err
 }
 
 // Force sets the version of a source and clears the dirty flag without running any SQL.
-// Only call it after the actual schema has been checked by hand.
+// Only call it after the actual schema has been checked by hand. version is a version
+// that has a file in the source, or 0 / -1 for "nothing applied" (0 means a real version
+// only when the source has a version 0 file, matching Versions, which reports 0 for an
+// empty table). Any other version is refused before connecting: the engine would accept
+// it and every later Up would find no next file.
 func Force(ctx context.Context, cfg Config, src Source, version int) error {
 	return production().force(ctx, cfg, src, version)
 }
@@ -275,13 +358,33 @@ func (r runner) force(ctx context.Context, cfg Config, src Source, version int) 
 	if err := validateAll([]Source{src}); err != nil {
 		return err
 	}
+	target, err := forceTarget(src, version)
+	if err != nil {
+		return err
+	}
 	return r.withMigrate(ctx, cfg, src, func(m migrationSession) error {
-		if err := m.Force(version); err != nil {
+		if err := m.Force(target); err != nil {
 			return safeerror.Wrap("force migration version failed", err)
 		}
 		cfg.logger().WarnContext(ctx, "migration version forced", "source", src.Name, "version", version)
 		return nil
 	})
+}
+
+// forceTarget maps the operator's version to the engine's: -1 (and 0 without a version 0
+// file) is the nil version, otherwise the version must exist in the source.
+func forceTarget(src Source, version int) (int, error) {
+	known, err := sourceVersions(src)
+	if err != nil {
+		return 0, err
+	}
+	switch {
+	case version == -1, version == 0 && !known[0]:
+		return -1, nil
+	case version >= 0 && known[uint64(version)]:
+		return version, nil
+	}
+	return 0, fmt.Errorf("source %s: version %d has no migration file; force an existing version, or 0 when nothing is applied", src.Name, version)
 }
 
 // migrationSession is the migration engine consumed by the orchestration layer.
@@ -315,7 +418,8 @@ func (r runner) withMigrate(ctx context.Context, cfg Config, src Source, fn func
 	defer release()
 	m, err := r.open(cfg, src)
 	if err != nil {
-		if errors.Is(err, errEmpty) && ctx.Err() != nil {
+		var recorded emptyApplied
+		if (errors.Is(err, errEmpty) || errors.As(err, &recorded)) && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return err
@@ -358,7 +462,17 @@ func openMigration(cfg Config, src Source) (migrationSession, error) {
 	}
 	owned.finish(false)
 	if empty(src.FS) {
+		v, dirty, err := drv.Version()
 		_ = drv.Close()
+		if err != nil {
+			return nil, safeerror.Wrap("read migration version failed", err)
+		}
+		if v == database.NilVersion && dirty {
+			return nil, emptyApplied{source: src.Name, dirty: true, noVersion: true}
+		}
+		if v != database.NilVersion {
+			return nil, emptyApplied{source: src.Name, version: uint(v), dirty: dirty}
+		}
 		return nil, errEmpty
 	}
 	files, err := iofs.New(src.FS, ".")
