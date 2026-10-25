@@ -10,6 +10,8 @@
 
 ### Изменено
 
+- FIN-260: disabled Renovate controller завершается до credentials/config/event/API. Непривилегированный workflow gate допускает Environment только при точном lowercase true; явный --bootstrap независимо требует credential. Enabled guards, runtime Go API и независимые coverage gates сохранены; внешний bootstrap/protections выполняются владельцем отдельно.
+
 - FIN-251: отмена во время инициализации пустого источника сохраняется в Up/Versions/CheckUpDownUp, реальные ошибки инициализации не перетираются. PG regression с двумя файлами и ожидающим конкурентным Down проверяет непрерывную queue lock между native Steps.
 
 - FIN-251: публичный Validate возвращает ошибку для nil FS до файлового/сетевого IO вместо panic; добавлены Unit и внешний consumer API regression.

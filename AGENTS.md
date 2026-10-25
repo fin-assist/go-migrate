@@ -229,6 +229,14 @@ is added to the template, and N/A is never reported as 100% coverage.
 
 ## Workflow
 
+FIN-260: unless RENOVATE_POLICY_ENABLED is exactly case-sensitive `true`, controller CLI exits
+before credentials, config/event reads or API calls. An independent permissionless shell gate
+has no secrets, checkout or Environment and emits only literal true/false before privileged
+job admission; never compare the raw variable with case-insensitive Actions equality.
+Explicit --bootstrap always requires RENOVATE_POLICY_TOKEN and remains independent of activation.
+Preserve all enabled identity/protection/CI guards. Bootstrap both own presets and prove resolver
+success before merging own-ref config; actual protections, credentials and activation are owner operations.
+
 - Branches: `<kind>/<slug>` — `feature/…`, `fix/…`, `tooling/…`; a PR targets `main`. Renovate's `renovate/…`
   branches are the exception. Commits: imperative English subject (`Add …`, `Fix …`, `Address review: …`).
 - PR title and description in Russian: what changed and why, the `CHANGELOG.md` line, whether the change is
