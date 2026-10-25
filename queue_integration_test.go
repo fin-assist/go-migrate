@@ -3,6 +3,7 @@ package migrate_test
 import (
 	"context"
 	"errors"
+	"runtime/debug"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -37,9 +38,13 @@ func waitPostgres(t *testing.T, ctx context.Context, conn *pgx.Conn, query strin
 // waitRunnerDisconnected waits until no runner connection remains on the test database.
 // A client-side close is asynchronous for the server: the backend stays visible in
 // pg_stat_activity for a few milliseconds, so a single read races with it (FIN-279).
-// A real leak keeps the connection open and fails the test at the deadline.
+// A real leak keeps the connection open and fails the test at the deadline. GC is off
+// while waiting: a finalizer of an unreachable leaked net.Conn would otherwise close the
+// socket and hide the leak. The package runs no parallel tests, so the process-wide
+// setting affects only this wait.
 func waitRunnerDisconnected(t *testing.T, conn *pgx.Conn) {
 	t.Helper()
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	waitPostgres(t, ctx, conn, "SELECT NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name IN ('migrate','migrate-wait'))")
