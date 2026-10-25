@@ -139,6 +139,10 @@ func TestIntegrationEmptySourceWithAppliedVersionFails(t *testing.T) {
 			t.Fatalf("%s: empty source hid applied version: %v", name, err)
 		}
 	}
+	// Force cannot recover from a build without the files, and the error must not suggest it.
+	if err := migrate.Force(ctx, c, older, 0); err == nil || strings.Contains(err.Error(), "force") {
+		t.Fatalf("force from an empty build: %v", err)
+	}
 	st, err := migrate.Versions(ctx, c, []migrate.Source{fresh, older})
 	if err != nil || st[0].Version != 0 || st[1].Version != 1 || st[1].Dirty || !exists(t, dsn, "a") {
 		t.Fatalf("state %v %v", st, err)

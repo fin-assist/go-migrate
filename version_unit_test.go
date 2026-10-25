@@ -139,6 +139,9 @@ func TestUnitEmptySourceWithRecordedVersion(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "applied version 5 of source service has no migration file") {
 			t.Fatalf("%s: recorded version of an empty source ignored: %v", name, err)
 		}
+		if strings.Contains(err.Error(), "force") || !strings.Contains(err.Error(), "run Down with a build that has the file") {
+			t.Fatalf("%s: unusable hint: %v", name, err)
+		}
 	}
 	recorded.dirty = true
 	st, err := r.versions(context.Background(), cfg, []Source{empty})
@@ -148,5 +151,19 @@ func TestUnitEmptySourceWithRecordedVersion(t *testing.T) {
 	r.open = func(Config, Source) (migrationSession, error) { return nil, errEmpty }
 	if err := r.up(context.Background(), cfg, []Source{empty}); err != nil {
 		t.Fatalf("empty source without a version must be skipped: %v", err)
+	}
+}
+
+func TestUnitEmptyRecordedVersionPreservesCancellation(t *testing.T) {
+	cfg := DefaultConfig("postgres://localhost/db")
+	empty := Source{Name: "service", Table: "schema_migrations", FS: fstest.MapFS{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := fakeRunner(&fakeQueue{}, &fakeSession{})
+	r.open = func(Config, Source) (migrationSession, error) {
+		cancel()
+		return nil, emptyApplied{source: "service", version: 1}
+	}
+	if st, err := r.versions(ctx, cfg, []Source{empty}); !errors.Is(err, context.Canceled) || st != nil {
+		t.Fatalf("versions %v %v", st, err)
 	}
 }

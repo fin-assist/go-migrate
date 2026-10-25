@@ -175,3 +175,68 @@ func TestIntegrationQueueRemainsHeldAcrossFilesBeforeCompetingDown(t *testing.T)
 		t.Fatalf("competitor ran in the wrong order: %v %v", st, err)
 	}
 }
+
+// TestIntegrationEmptyRecordedVersionPreservesCancellation: an empty source whose table
+// records a version must still report cancellation that happened during initialization.
+func TestIntegrationEmptyRecordedVersionPreservesCancellation(t *testing.T) {
+	for _, operation := range []string{"versions", "up", "down"} {
+		t.Run(operation, func(t *testing.T) {
+			dsn := pgtest.DSN(t)
+			ctx, deadline := context.WithTimeout(t.Context(), 10*time.Second)
+			defer deadline()
+			newer := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{
+				"1_a.up.sql": {Data: []byte("CREATE TABLE a(id bigint)")}, "1_a.down.sql": {Data: []byte("DROP TABLE a")},
+			}}
+			if err := migrate.Up(ctx, migrate.DefaultConfig(dsn), []migrate.Source{newer}); err != nil {
+				t.Fatal(err)
+			}
+			conn, err := pgx.Connect(ctx, dsn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = conn.Close(context.Background()) }()
+			var databaseName string
+			if err := conn.QueryRow(ctx, "SELECT current_database()").Scan(&databaseName); err != nil {
+				t.Fatal(err)
+			}
+			nativeLock, err := database.GenerateAdvisoryLockId(databaseName, "public", "versions")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", nativeLock); err != nil {
+				t.Fatal(err)
+			}
+			older := migrate.Source{Name: "service", Table: "versions", FS: fstest.MapFS{}}
+			cfg := migrate.DefaultConfig(dsn)
+			runctx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				switch operation {
+				case "versions":
+					st, err := migrate.Versions(runctx, cfg, []migrate.Source{older})
+					if err == nil && st != nil {
+						err = errors.New("status returned after cancellation")
+					}
+					result <- err
+				case "down":
+					result <- migrate.Down(runctx, cfg, older, 1)
+				default:
+					result <- migrate.Up(runctx, cfg, []migrate.Source{older})
+				}
+			}()
+			waitPostgres(t, ctx, conn, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND application_name='migrate' AND wait_event='advisory')")
+			cancel()
+			if _, err := conn.Exec(ctx, "SELECT pg_advisory_unlock($1)", nativeLock); err != nil {
+				t.Fatal(err)
+			}
+			if err := receiveRun(t, ctx, result); !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+			st, err := migrate.Versions(ctx, cfg, []migrate.Source{older})
+			if err != nil || st[0].Version != 1 || st[0].Dirty {
+				t.Fatalf("recorded state changed: %v %v", st, err)
+			}
+		})
+	}
+}

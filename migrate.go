@@ -195,7 +195,10 @@ type emptyApplied struct {
 	dirty   bool
 }
 
-func (e emptyApplied) Error() string { return appliedWithoutFile(e.version, e.source).Error() }
+// Error gives no force hint: Force cannot work in a build without the source's files.
+func (e emptyApplied) Error() string {
+	return fmt.Sprintf("applied version %d of source %s has no migration file: this build has no files of the source; check the schema and run Down with a build that has the file, or skip this migration run", e.version, e.source)
+}
 
 func isSQL(name string) bool {
 	return len(name) > 4 && name[len(name)-4:] == ".sql"
@@ -404,7 +407,8 @@ func (r runner) withMigrate(ctx context.Context, cfg Config, src Source, fn func
 	defer release()
 	m, err := r.open(cfg, src)
 	if err != nil {
-		if errors.Is(err, errEmpty) && ctx.Err() != nil {
+		var recorded emptyApplied
+		if (errors.Is(err, errEmpty) || errors.As(err, &recorded)) && ctx.Err() != nil {
 			return ctx.Err()
 		}
 		return err
