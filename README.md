@@ -69,3 +69,7 @@ make api
 CI сохраняет required job `go`, а также `lint`, `api` (gorelease) и `migrations`. SQL fixtures находятся только в `testdata/`; workflow `migrations` защищает runtime SQL `migrations/*.sql`, которых у runner нет. [CHANGELOG.md](CHANGELOG.md), [AGENTS.md](AGENTS.md), [выпуск](docs/releasing.md), [Renovate](docs/renovate-policy.md).
 
 FIN-260: при unset/false/TRUE/True controller успешно завершается без credentials, чтения config/event и любых API-запросов. Только точное case-sensitive `true` допускает привилегированный job: shell gate без permissions, secrets, checkout и Environment выдаёт константу true/false. CLI повторяет early-off до token/config/event/API; явный `--bootstrap` отдельно требует RENOVATE_POLICY_TOKEN и не включает автоматизацию. Enabled guards сохранены. Собственные presets/bootstrap и их resolver proof обязательны до merge own-ref config; фактические настройки, защиты, credentials и активацию выполняет владелец отдельно, этот код их не меняет.
+
+Проверка `api` устойчива к публикации тега во время CI: release-коммит сравнивается
+с предыдущим выпуском, удалённый тег проверяется по commit до и после `gorelease`.
+Подробности и границы исключения — [docs/releasing.md](docs/releasing.md#проверка-версии-в-ci-fin-264).
