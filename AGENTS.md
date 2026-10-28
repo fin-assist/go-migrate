@@ -63,6 +63,8 @@ the PR with why it is needed: every service that imports the library inherits it
   point the tests at it: `TEST_DATABASE_URL='postgres://postgres@localhost:<port>/postgres?sslmode=disable' make test`.
   Without either, integration tests are skipped locally and fail in CI (`CI` set) — a skip is not a pass.
 - `make lint` and `make api` run the pinned tools through `go run`; no separate install.
+- Script checks first resolve the pinned shared source from GitHub unless its verified cache is already warm.
+  A fresh environment needs GitHub access as well as the Go module proxy; cached source alone does not cache Go tools.
 - The script tests need PyYAML (`python3-yaml`, or `pip install pyyaml`): `scripts/test_workflow_hardening.py` parses
   the workflows with `yaml.safe_load` and fails without it. `scripts/test_lint_policy.py` also builds the pinned
   golangci-lint and downloads the probe's pinned modules (prometheus, otel, x/net, glog, klog, automaxprocs,
