@@ -79,7 +79,7 @@ PR Renovate проходит CI сервиса. После активации FI
 
 Все репозитории `fin-assist` сейчас публичные: модули берутся из git напрямую (`GOPRIVATE=github.com/fin-assist/*`), токен не нужен. Если библиотека станет приватной:
 
-- CI — секрет `GO_MODULES_TOKEN` с чтением репозиториев `fin-assist` (шаг «Access to private modules» уже есть в workflow);
+- доверенный CI на `push` — секрет `GO_MODULES_TOKEN` с чтением репозиториев `fin-assist`; PR, включая ветки того же репозитория, его не получают; одного секрета недостаточно для приватных dependency PR — такой pipeline требует отдельного согласования;
 - `docker build` сервиса — секрет `netrc`;
 - локально — `git config --global url."https://x-access-token:<token>@github.com/fin-assist/".insteadOf "https://github.com/fin-assist/"`;
 - Renovate видит приватные репозитории организации через своё GitHub App, если оно установлено на них.

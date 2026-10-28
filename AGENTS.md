@@ -44,13 +44,13 @@ for itself: what it does, its YouTrack issue, which services use it.
 | Integration guide for services | `README.md`, «Внедрение» |
 | Versions, compatibility, releases, Renovate | `docs/releasing.md`, `CHANGELOG.md`, `.github/workflows/release.yml`, `renovate.json` |
 | Independent statements coverage guards and changelog checks | `scripts/` |
-| CI, lint | `.github/workflows/ci.yml`, `.golangci.yml`, `.squawk.toml`, `Makefile` |
+| CI, lint | `.github/workflows/ci.yml`, `.finassist-ci.json` (shared source and overrides), `Makefile` |
 | PR review by Claude | `.github/workflows/claude.yml` |
 
 ### Stack
 
-Versions are in `go.mod` (Go toolchain included), `.github/workflows/ci.yml` and `Makefile` (golangci-lint,
-gorelease), `internal/pgtest.DefaultImage` (PostgreSQL). The same pieces as the services where needed: pgx v5,
+Versions are in `go.mod` (Go toolchain included), the pinned shared source `common/versions.json` (linters)
+and `Makefile` (local gorelease, required to match the pinned `shared-api.yml` in CI), `internal/pgtest.DefaultImage` (PostgreSQL). The same pieces as the services where needed: pgx v5,
 golang-migrate, grpc-go, protobuf, prometheus client_golang, testcontainers-go, squawk. A new dependency is named in
 the PR with why it is needed: every service that imports the library inherits it.
 
@@ -63,6 +63,8 @@ the PR with why it is needed: every service that imports the library inherits it
   point the tests at it: `TEST_DATABASE_URL='postgres://postgres@localhost:<port>/postgres?sslmode=disable' make test`.
   Without either, integration tests are skipped locally and fail in CI (`CI` set) — a skip is not a pass.
 - `make lint` and `make api` run the pinned tools through `go run`; no separate install.
+- Script checks first resolve the pinned shared source from GitHub unless its verified cache is already warm.
+  A fresh environment needs GitHub access as well as the Go module proxy; cached source alone does not cache Go tools.
 - The script tests need PyYAML (`python3-yaml`, or `pip install pyyaml`): `scripts/test_workflow_hardening.py` parses
   the workflows with `yaml.safe_load` and fails without it. `scripts/test_lint_policy.py` also builds the pinned
   golangci-lint and downloads the probe's pinned modules (prometheus, otel, x/net, glog, klog, automaxprocs,
@@ -114,7 +116,7 @@ The same priorities and rules as the services (`AGENTS.md` of `fin-assist/go-ser
   `promhttp.HandlerFor`, `InstrumentMetricHandler(reg, …)`, methods of a passed `*slog.Logger`, `Registerer`,
   `*http.Client`, `TracerProvider` or `MeterProvider`. Other ways to reach process-wide state are not lint rules and
   are not review findings about lint bypasses; review checks the principle itself.
-  `scripts/test_lint_policy.py` runs the pinned linter (version from `Makefile`, equal to `ci.yml`) on a hermetic probe
+  `scripts/test_lint_policy.py` runs the pinned linter (`common/versions.json` at the manifest SHA) on a hermetic probe
   module, for linux and windows: every forbidden and allowed form, chains such as
   `prometheus.DefaultRegisterer.MustRegister(c)` or `log.Default().Printf` and an aliased import are reported by their
   first identifier. The probe's versions follow one rule (`expected_pin`): a module in `go.mod` gets max(`go.mod`, its
@@ -410,3 +412,9 @@ identifier, behaviour, migration and dependency check:
 ## Renovate automation
 
 FIN-211: dependency-only Renovate PRs may be merged/closed by the reviewed `renovate-policy.yml` controller, after exact-head required CI and bot-only commit checks. Ordinary PRs and release-to-main PRs still require the owner. Do not enable native automerge or bypass protections. Preserve base policy in `renovate-base.json` (schedules, groups, allowed versions and manual Go upgrades); generated target/version approvals live on the separate `renovate-policy` branch. Failed exact values are isolated for explicit Dashboard approval; new values keep their original groups. AndroidX/Compose and mixed groups never auto-merge. See `docs/renovate-policy.md` for credentials, safeguards, bootstrap and verification.
+
+## Shared Go CI (FIN-372)
+
+`.finassist-ci.json` pins `fin-assist/go-ci` by full SHA and declares the lint profile/overrides. CI workflow calls use the same SHA. `make lint`, `make fmt`, `make lint-config` and `make lint-migrations BASE_REF=origin/main` resolve that source with `scripts/common_ci.py`; generated linter configs live in ignored `.finassist-ci/generated/`. Do not restore copied root linter configs. Preserve coverage/test/API/security gates and the bank-statement-data-only smallint exception. Update and rollback all pins in one PR. Details: https://github.com/fin-assist/go-ci/blob/main/docs/shared-go-ci.md.
+
+Renovate updates workflow, with.revision and manifest pins. If the pinned common/bootstrap.py changes, sync scripts/common_ci.py from that exact source in the same PR; the byte-equality gate fails until then. Linter configs remain in the shared source. Rollback restores the matching bootstrap copy and all pins. A human bootstrap commit makes the PR manual and ineligible for bot-only FIN-211 automerge.
