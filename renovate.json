@@ -9,5 +9,50 @@
   "prBodyNotes": [
     "<!-- fin211-update {{{encodeBase64 (toJSON (toObject 'depName' depName 'packageName' packageName 'newValue' newValue 'datasource' datasource 'newDigest' newDigest 'newMajor' newMajor))}}} -->"
   ],
-  "commitBody": "{{#each upgrades}}<!-- fin211-update {{{encodeBase64 (toJSON (toObject 'depName' depName 'packageName' packageName 'newValue' newValue 'datasource' datasource 'newDigest' newDigest 'newMajor' newMajor))}}} -->\n{{/each}}"
+  "commitBody": "{{#each upgrades}}<!-- fin211-update {{{encodeBase64 (toJSON (toObject 'depName' depName 'packageName' packageName 'newValue' newValue 'datasource' datasource 'newDigest' newDigest 'newMajor' newMajor))}}} -->\n{{/each}}",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "FIN-372: keep the local shared source digest in the CI update PR",
+      "managerFilePatterns": [
+        "/\\.finassist-ci\\.json$/"
+      ],
+      "matchStrings": [
+        "\"revision\"\\s*:\\s*\"(?<currentDigest>[0-9a-f]{40})\""
+      ],
+      "depNameTemplate": "fin-assist/go-service-template",
+      "packageNameTemplate": "fin-assist/go-service-template",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "main"
+    },
+    {
+      "customType": "regex",
+      "description": "FIN-372: update each reusable workflow revision input with its uses pin",
+      "managerFilePatterns": [
+        ".github/workflows/ci.yml"
+      ],
+      "matchStrings": [
+        "\\brevision:\\s*'(?<currentDigest>[0-9a-f]{40})'"
+      ],
+      "depNameTemplate": "fin-assist/go-service-template",
+      "packageNameTemplate": "fin-assist/go-service-template",
+      "datasourceTemplate": "github-digest",
+      "currentValueTemplate": "main"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "FIN-372: update workflow and local lint pins together; rollback together",
+      "matchPackageNames": [
+        "fin-assist/go-service-template",
+        "fin-assist/go-service-template/**"
+      ],
+      "groupName": "FinAssist shared Go CI",
+      "groupSlug": "finassist-shared-go-ci",
+      "schedule": [
+        "at any time"
+      ],
+      "pinDigests": true
+    }
+  ]
 }
