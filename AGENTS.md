@@ -50,7 +50,7 @@ for itself: what it does, its YouTrack issue, which services use it.
 ### Stack
 
 Versions are in `go.mod` (Go toolchain included), the pinned shared source `common/versions.json` (linters)
-and `Makefile` (gorelease), `internal/pgtest.DefaultImage` (PostgreSQL). The same pieces as the services where needed: pgx v5,
+and `Makefile` (local gorelease, required to match the pinned `shared-api.yml` in CI), `internal/pgtest.DefaultImage` (PostgreSQL). The same pieces as the services where needed: pgx v5,
 golang-migrate, grpc-go, protobuf, prometheus client_golang, testcontainers-go, squawk. A new dependency is named in
 the PR with why it is needed: every service that imports the library inherits it.
 
@@ -416,3 +416,5 @@ FIN-211: dependency-only Renovate PRs may be merged/closed by the reviewed `reno
 ## Shared Go CI (FIN-372)
 
 `.finassist-ci.json` pins `fin-assist/go-service-template` by full SHA and declares the lint profile/overrides. CI workflow calls use the same SHA. `make lint`, `make fmt`, `make lint-config` and `make lint-migrations BASE_REF=origin/main` resolve that source with `scripts/common_ci.py`; generated linter configs live in ignored `.finassist-ci/generated/`. Do not restore copied root linter configs. Preserve coverage/test/API/security gates and the bank-statement-data-only smallint exception. Update and rollback all pins in one PR. Details: https://github.com/fin-assist/go-service-template/blob/main/docs/shared-go-ci.md.
+
+Renovate updates workflow, with.revision and manifest pins. If the pinned common/bootstrap.py changes, sync scripts/common_ci.py from that exact source in the same PR; the byte-equality gate fails until then. Linter configs remain in the shared source. Rollback restores the matching bootstrap copy and all pins. A human bootstrap commit makes the PR manual and ineligible for bot-only FIN-211 automerge.
