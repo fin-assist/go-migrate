@@ -290,7 +290,10 @@ before credentials, config/event reads or API calls. An independent permissionle
 has no secrets, checkout or Environment and emits only literal true/false before privileged
 job admission; never compare the raw variable with case-insensitive Actions equality.
 Explicit --bootstrap always requires RENOVATE_POLICY_TOKEN and remains independent of activation.
-Preserve all enabled identity/protection/CI guards. Bootstrap both own presets and prove resolver
+Preserve all enabled identity/protection/CI guards. FIN-447 additionally requires exactly one GitHub Actions
+App15368 binding for every configured required context and explicit no-force/no-delete target protection.
+Conflicting or unknown PR mergeability blocks retry claims, quarantine and close at entry and final freshness
+checks; known nonconflicting blocked red CI may still receive its one retry. Bootstrap both own presets and prove resolver
 success before merging own-ref config; actual protections, credentials and activation are owner operations.
 
 - Branches: `<kind>/<slug>` — `feature/…`, `fix/…`, `tooling/…`; a PR targets `main`. Renovate's `renovate/…`
