@@ -76,6 +76,8 @@ FIN-260: при unset/false/TRUE/True controller успешно завершае
 
 FIN-447 усиливает только контроллер Renovate: обязательные checks должны быть явно привязаны к GitHub Actions App15368, target запрещает force-push/delete; конфликтный или неизвестный PR не получает retry/quarantine/close. Существующие CI, пороги, Go API и выключенный флаг активации сохраняются.
 
+FIN-451 останавливает quarantine/recovery и spent-retry уведомление при конфликте, появившемся после предыдущей проверки PR. Retry claim сохраняет расходованный бюджет; повторная доставка события не запускает второй retry. [Подробности](docs/renovate-policy.md#поздние-конфликты-fin-451). Go API и runtime библиотеки не меняются.
+
 ## Общий Go CI и линтеры (FIN-372)
 
 `.finassist-ci.json` закрепляет общий источник `fin-assist/go-ci` полным SHA и объявляет профиль/исключения. CI вызывает reusable workflows того же SHA; `make lint`, `make fmt`, `make lint-config` и `make lint-migrations BASE_REF=origin/main` используют его через `scripts/common_ci.py`. Конфигурации создаются в игнорируемом `.finassist-ci/generated/`; локальные копии правил не редактируются. Первый локальный вызов требует доступ к GitHub. Обновление workflow и manifest pin приходит одним PR Renovate; откат возвращает прежние SHA вместе. [Источник, профили, обновление и откат](https://github.com/fin-assist/go-ci/blob/main/docs/shared-go-ci.md). Проверки тестов/coverage, PostgreSQL 18, race и совместимость сохраняются.

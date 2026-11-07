@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- FIN-451: контроллер Renovate повторно проверяет актуальный PR перед записью quarantine/recovery и spent-retry уведомлением или восстановлением receipt; поздний конфликт останавливает записи, сохраняя расходованный retry-бюджет. Runtime и публичный Go API не меняются.
+
 - FIN-447: контроллер Renovate проверяет явную привязку обязательных checks к GitHub Actions и запрет force-push/delete; конфликтный или ещё неизвестный PR не получает retry claim, quarantine или автозакрытие. Runtime и публичный Go API не меняются.
 
 - FIN-430: добавлены профильные QA-навыки в каталог ревью (ai-qa-review, database-testing), переносимые правила применения и закреплённые источники/лицензии. Runtime, API и CI gates не меняются.
